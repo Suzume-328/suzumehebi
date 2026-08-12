@@ -336,11 +336,75 @@
   #send-btn{ background: #bdeccd; color: #14382c; }
   #cancel-btn{ background: rgba(255,255,255,0.12); color: #fff; }
 
+  /* ---------- ログイン画面 ---------- */
+  #login-screen{
+    position: fixed;
+    inset: 0;
+    z-index: 100;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: calc(var(--safe-t) + 24px) calc(var(--safe-r) + 24px) calc(var(--safe-b) + 24px) calc(var(--safe-l) + 24px);
+    background: linear-gradient(160deg, #0d1f18, #142c22);
+  }
+  #login-screen.hide{ display: none; }
+  #login-card{ width: 100%; max-width: 320px; }
+  #login-card h1{
+    font-size: 18px;
+    margin: 0 0 20px;
+    text-align: center;
+    font-weight: 700;
+  }
+  #login-card input{
+    width: 100%;
+    padding: 12px 14px;
+    margin-bottom: 10px;
+    border-radius: 12px;
+    border: 1px solid rgba(255,255,255,0.25);
+    background: rgba(255,255,255,0.08);
+    color: #fff;
+    font-size: 14px;
+    font-family: inherit;
+  }
+  #login-card input::placeholder{ color: rgba(255,255,255,0.45); }
+  #login-btn{
+    width: 100%;
+    padding: 13px 0;
+    margin-top: 4px;
+    font-size: 15px;
+    font-weight: 700;
+    color: #14382c;
+    background: linear-gradient(180deg, #eafff2, #bdeccd);
+    border: none;
+    border-radius: 999px;
+    cursor: pointer;
+  }
+  #login-btn:disabled{ opacity: 0.55; }
+  #login-error{
+    min-height: 18px;
+    margin-top: 10px;
+    font-size: 12.5px;
+    color: #ffb4b4;
+    text-align: center;
+  }
+  #app.hide{ display: none; }
+
 </style>
 </head>
 <body>
 
-<div id="app">
+<!-- ログイン画面 -->
+<div id="login-screen">
+  <form id="login-card">
+    <h1>ふたりのマリモ</h1>
+    <input type="email" id="login-email" placeholder="メールアドレス" autocomplete="username" required>
+    <input type="password" id="login-password" placeholder="パスワード" autocomplete="current-password" required>
+    <button type="submit" id="login-btn">ログイン</button>
+    <div id="login-error"></div>
+  </form>
+</div>
+
+<div id="app" class="hide">
 
   <!-- 背景写真（今はダミー画像） -->
   <img id="bg-photo" src="https://picsum.photos/seed/marimo-lake/900/1600" alt="">
@@ -424,7 +488,6 @@
     </div>
 
     <button id="water-btn">水をあげる</button>
-    <button id="test-btn">（テスト）相手が水をあげた</button>
   </div>
 
   <!-- コメント入力シート -->
@@ -440,151 +503,316 @@
 
 </div>
 
-<script>
-(function(){
-  "use strict";
+<script type="module">
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-  // ---------- 状態（保存なし・リロードで初期化） ----------
-  // 今回のモックでは「自分 = ヤマト」固定。あとでSupabase連携時にログイン情報で置き換える。
-  const ME = "yamato";
+// ---------- Supabase設定 ----------
+const SUPABASE_URL = "https://ndslunrqbesiawhaukel.supabase.co";
+const SUPABASE_ANON_KEY = "sb_publishable_nCfstmQdjsy4quRwBnqbDA_AGESJE2e";
 
-  const state = {
-    day: 128,
-    colorName: "みどり",
-    sizeMm: 42,
-    watered: { yamato: false, sakura: false },
-    logs: [{ name: "さくら", time: "7:12", text: "今日は雨だね" }],
-    cleared: false // 二人分揃って水が澄んだかどうか
-  };
+const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
-  // ---------- 要素参照 ----------
-  const el = {
-    dayCount: document.getElementById("day-count"),
-    waterLayer: document.getElementById("water-layer"),
-    particles: document.getElementById("light-particles"),
-    gaugeRow: document.getElementById("gauge-row"),
-    fillYamato: document.getElementById("fill-yamato"),
-    fillSakura: document.getElementById("fill-sakura"),
-    gaugeYamato: document.getElementById("gauge-yamato"),
-    gaugeSakura: document.getElementById("gauge-sakura"),
-    logBox: document.getElementById("log-box"),
-    waterBtn: document.getElementById("water-btn"),
-    testBtn: document.getElementById("test-btn"),
-    sheetBackdrop: document.getElementById("sheet-backdrop"),
-    sheet: document.getElementById("comment-sheet"),
-    input: document.getElementById("comment-input"),
-    sendBtn: document.getElementById("send-btn"),
-    cancelBtn: document.getElementById("cancel-btn"),
-  };
+// メールアドレス → actor 判定
+const ACTOR_BY_EMAIL = {
+  "yamato.shimobayashi328@gmail.com": "yamato",
+  "bovida213@icloud.com": "sakura",
+};
+const ACTOR_NAME = { yamato: "ヤマト", sakura: "さくら" };
 
-  el.dayCount.textContent = state.day;
+// 成長ロジック（その日水をあげた人数ごとの増分）
+const GROWTH = {
+  0: { mm: 0.1, q: -8 },
+  1: { mm: 0.5, q: 25 },
+  2: { mm: 1.5, q: 60 },
+};
 
-  // ---------- 光の粒を生成 ----------
-  function buildParticles(){
-    const count = 18;
-    for(let i = 0; i < count; i++){
-      const p = document.createElement("div");
-      p.className = "particle";
-      p.style.left = (Math.random() * 90 + 5) + "%";
-      p.style.animationDelay = (Math.random() * 4.5) + "s";
-      p.style.animationDuration = (3.5 + Math.random() * 2.5) + "s";
-      el.particles.appendChild(p);
+let ME = null; // ログイン後に "yamato" | "sakura" が入る
+
+// ---------- 日付ユーティリティ（JST 午前4時境界） ----------
+// local_date = 「現在時刻(JST) - 4時間」の日付部分
+function getLocalDate(baseDate){
+  const d = baseDate ? new Date(baseDate) : new Date();
+  const shifted = new Date(d.getTime() - 4 * 60 * 60 * 1000);
+  return shifted.toLocaleDateString("sv-SE", { timeZone: "Asia/Tokyo" });
+}
+function addDaysToDateStr(dateStr, days){
+  const d = new Date(dateStr + "T00:00:00Z");
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+function clamp(v, min, max){ return Math.max(min, Math.min(max, v)); }
+
+// ---------- 要素参照 ----------
+const el = {
+  loginScreen: document.getElementById("login-screen"),
+  loginForm: document.getElementById("login-card"),
+  loginEmail: document.getElementById("login-email"),
+  loginPassword: document.getElementById("login-password"),
+  loginBtn: document.getElementById("login-btn"),
+  loginError: document.getElementById("login-error"),
+  app: document.getElementById("app"),
+  dayCount: document.getElementById("day-count"),
+  colorName: document.getElementById("marimo-color"),
+  sizeLabel: document.getElementById("marimo-size"),
+  marimoSvg: document.getElementById("marimo-float"),
+  waterLayer: document.getElementById("water-layer"),
+  particles: document.getElementById("light-particles"),
+  fillYamato: document.getElementById("fill-yamato"),
+  fillSakura: document.getElementById("fill-sakura"),
+  gaugeYamato: document.getElementById("gauge-yamato"),
+  gaugeSakura: document.getElementById("gauge-sakura"),
+  logBox: document.getElementById("log-box"),
+  waterBtn: document.getElementById("water-btn"),
+  sheetBackdrop: document.getElementById("sheet-backdrop"),
+  sheet: document.getElementById("comment-sheet"),
+  input: document.getElementById("comment-input"),
+  sendBtn: document.getElementById("send-btn"),
+  cancelBtn: document.getElementById("cancel-btn"),
+};
+
+// ---------- 光の粒を生成 ----------
+(function buildParticles(){
+  const count = 18;
+  for(let i = 0; i < count; i++){
+    const p = document.createElement("div");
+    p.className = "particle";
+    p.style.left = (Math.random() * 90 + 5) + "%";
+    p.style.animationDelay = (Math.random() * 4.5) + "s";
+    p.style.animationDuration = (3.5 + Math.random() * 2.5) + "s";
+    el.particles.appendChild(p);
+  }
+})();
+
+// ---------- 波紋アニメーション ----------
+function showRipple(gaugeEl){
+  const r = document.createElement("div");
+  r.className = "ripple";
+  gaugeEl.appendChild(r);
+  r.addEventListener("animationend", () => r.remove());
+}
+
+function escapeHtml(s){
+  return s.replace(/[&<>"']/g, c => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[c]));
+}
+
+// ---------- マリモの見た目を反映 ----------
+function renderMarimo(marimo){
+  const sizeMm = marimo.size_mm;
+  const q = marimo.water_quality;
+
+  el.sizeLabel.textContent = Math.round(sizeMm * 10) / 10;
+  // 水質スコアから色の呼び名を判定（しきい値は仮）
+  el.colorName.textContent = q >= 70 ? "みどり" : (q >= 40 ? "くすみ" : "にごり");
+
+  const vw = 8 + 52 * Math.sqrt(Math.max(0, sizeMm - 10) / 290);
+  el.marimoSvg.style.width = vw + "vw";
+  el.marimoSvg.style.height = vw + "vw";
+
+  const started = new Date(marimo.started_on + "T00:00:00Z");
+  const today = new Date(getLocalDate() + "T00:00:00Z");
+  const days = Math.floor((today - started) / 86400000) + 1;
+  el.dayCount.textContent = Math.max(1, days);
+}
+
+// ---------- 水位ゲージ・水の透明度を反映 ----------
+function renderGauges(wateredSet){
+  el.fillYamato.style.height = wateredSet.has("yamato") ? "100%" : "0%";
+  el.fillSakura.style.height = wateredSet.has("sakura") ? "100%" : "0%";
+
+  const bothToday = wateredSet.has("yamato") && wateredSet.has("sakura");
+  el.waterLayer.classList.toggle("clear", bothToday);
+  el.particles.classList.toggle("show", bothToday);
+
+  if(wateredSet.has(ME)){
+    el.waterBtn.disabled = true;
+    el.waterBtn.textContent = "今日は水やり済み";
+  } else {
+    el.waterBtn.disabled = false;
+    el.waterBtn.textContent = "水をあげる";
+  }
+}
+
+// ---------- 最新ログを反映 ----------
+function renderLatestLog(row){
+  if(!row){ el.logBox.innerHTML = ""; return; }
+  const time = new Date(row.created_at).toLocaleTimeString("ja-JP", {
+    timeZone: "Asia/Tokyo", hour: "2-digit", minute: "2-digit", hour12: false
+  });
+  el.logBox.innerHTML =
+    '<span class="name">' + ACTOR_NAME[row.actor] + "</span>" +
+    '<span class="time">' + time + "</span>" +
+    '<span class="text">' + (row.comment ? "「" + escapeHtml(row.comment) + "」" : "（コメントなし）") + "</span>";
+}
+
+// ---------- 指定日に水をあげたactorの集合を取得 ----------
+async function fetchWateredActors(localDate){
+  const { data, error } = await supabase
+    .from("log")
+    .select("actor")
+    .eq("local_date", localDate)
+    .eq("action", "water");
+  if(error){ console.error(error); return new Set(); }
+  return new Set((data || []).map(r => r.actor));
+}
+
+async function fetchLatestLog(){
+  const { data, error } = await supabase
+    .from("log")
+    .select("actor, comment, created_at")
+    .order("created_at", { ascending: false })
+    .limit(1);
+  if(error){ console.error(error); return null; }
+  return data && data[0];
+}
+
+// ---------- 未精算の過去日を成長ロジックで精算する ----------
+// marimo.updated_at の日付の翌日から「今日の前日」までを、その日の水やり人数(0/1/2)に応じて成長させる。
+// 「今日」分は両者揃った瞬間にwater()側でリアルタイムに精算するので、ここでは対象にしない。
+async function settlePastDays(marimo){
+  const todayLd = getLocalDate();
+  const baseDate = marimo.updated_at || (marimo.started_on + "T00:00:00Z");
+  let cursor = addDaysToDateStr(getLocalDate(baseDate), 1);
+
+  let sizeMm = marimo.size_mm;
+  let quality = marimo.water_quality;
+  let changed = false;
+  let guard = 0;
+
+  while(cursor < todayLd && guard < 3650){
+    const watered = await fetchWateredActors(cursor);
+    const n = Math.min(watered.size, 2);
+    const delta = GROWTH[n];
+    sizeMm += delta.mm;
+    quality = clamp(quality + delta.q, 0, 100);
+    changed = true;
+    cursor = addDaysToDateStr(cursor, 1);
+    guard++;
+  }
+
+  if(!changed) return marimo;
+
+  const { data, error } = await supabase
+    .from("marimo")
+    .update({ size_mm: sizeMm, water_quality: quality, updated_at: new Date().toISOString() })
+    .eq("id", 1)
+    .select()
+    .single();
+  if(error){ console.error(error); return marimo; }
+  return data;
+}
+
+// ---------- 画面全体を最新状態で描画 ----------
+async function loadAndRender(){
+  let { data: marimo, error: marimoErr } = await supabase.from("marimo").select("*").eq("id", 1).single();
+  if(marimoErr){ console.error(marimoErr); return; }
+
+  marimo = await settlePastDays(marimo);
+
+  const watered = await fetchWateredActors(getLocalDate());
+  const latest = await fetchLatestLog();
+
+  renderMarimo(marimo);
+  renderGauges(watered);
+  renderLatestLog(latest);
+}
+
+// ---------- 水やり処理 ----------
+async function water(comment){
+  const todayLd = getLocalDate();
+
+  const { error } = await supabase.from("log").insert({
+    actor: ME, action: "water", comment: comment || null, local_date: todayLd,
+  });
+  if(error){
+    console.error(error);
+    alert("送信に失敗しました。もう一度お試しください。");
+    return;
+  }
+
+  showRipple(ME === "yamato" ? el.gaugeYamato : el.gaugeSakura);
+
+  const watered = await fetchWateredActors(todayLd);
+  renderGauges(watered);
+  renderLatestLog(await fetchLatestLog());
+
+  // 自分の水やりで二人分揃った場合のみ、その場で成長を反映する
+  if(watered.has("yamato") && watered.has("sakura")){
+    const { data: marimo, error: marimoErr } = await supabase.from("marimo").select("*").eq("id", 1).single();
+    if(!marimoErr && marimo){
+      const delta = GROWTH[2];
+      const newSize = marimo.size_mm + delta.mm;
+      const newQuality = clamp(marimo.water_quality + delta.q, 0, 100);
+      const { data: updated, error: updateErr } = await supabase
+        .from("marimo")
+        .update({ size_mm: newSize, water_quality: newQuality, updated_at: new Date().toISOString() })
+        .eq("id", 1)
+        .select()
+        .single();
+      if(!updateErr && updated) renderMarimo(updated);
     }
   }
-  buildParticles();
+}
 
-  // ---------- ログ描画 ----------
-  function renderLatestLog(){
-    const last = state.logs[state.logs.length - 1];
-    if(!last){ el.logBox.innerHTML = ""; return; }
-    el.logBox.innerHTML =
-      '<span class="name">' + last.name + '</span>' +
-      '<span class="time">' + last.time + '</span>' +
-      '<span class="text">' + (last.text ? "「" + last.text + "」" : "（コメントなし）") + '</span>';
+// ---------- コメントシートの開閉 ----------
+function openSheet(){
+  el.input.value = "";
+  el.sheetBackdrop.classList.add("show");
+  el.sheet.classList.add("show");
+  setTimeout(() => el.input.focus(), 250);
+}
+function closeSheet(){
+  el.sheetBackdrop.classList.remove("show");
+  el.sheet.classList.remove("show");
+}
+
+el.waterBtn.addEventListener("click", () => {
+  if(el.waterBtn.disabled) return;
+  openSheet();
+});
+el.cancelBtn.addEventListener("click", closeSheet);
+el.sheetBackdrop.addEventListener("click", closeSheet);
+el.sendBtn.addEventListener("click", () => {
+  const text = el.input.value.trim();
+  closeSheet();
+  water(text); // 入力は任意。空でも送信可
+});
+
+// ---------- ログイン ----------
+el.loginForm.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  el.loginError.textContent = "";
+  el.loginBtn.disabled = true;
+
+  const email = el.loginEmail.value.trim();
+  const password = el.loginPassword.value;
+  const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+
+  el.loginBtn.disabled = false;
+
+  if(error){
+    el.loginError.textContent = "メールアドレスまたはパスワードが違います";
+    return;
   }
-  renderLatestLog();
+  await enterApp(data.session);
+});
 
-  function nowLabel(){
-    const d = new Date();
-    const h = String(d.getHours()).padStart(2, "0");
-    const m = String(d.getMinutes()).padStart(2, "0");
-    return h + ":" + m;
+async function enterApp(session){
+  const actor = ACTOR_BY_EMAIL[session.user.email];
+  if(!actor){
+    el.loginError.textContent = "このアカウントは利用できません";
+    await supabase.auth.signOut();
+    return;
   }
+  ME = actor;
+  el.loginScreen.classList.add("hide");
+  el.app.classList.remove("hide");
+  await loadAndRender();
+}
 
-  // ---------- 波紋アニメーション ----------
-  function showRipple(gaugeEl){
-    const r = document.createElement("div");
-    r.className = "ripple";
-    gaugeEl.appendChild(r);
-    r.addEventListener("animationend", () => r.remove());
-  }
-
-  // ---------- 水やり処理 ----------
-  function water(person, name, text){
-    if(state.watered[person]) return;
-    state.watered[person] = true;
-
-    const fillEl = person === "yamato" ? el.fillYamato : el.fillSakura;
-    const gaugeEl = person === "yamato" ? el.gaugeYamato : el.gaugeSakura;
-    fillEl.style.height = "100%";
-    showRipple(gaugeEl);
-
-    state.logs.push({ name: name, time: nowLabel(), text: text || "" });
-    renderLatestLog();
-
-    if(person === ME){
-      el.waterBtn.disabled = true;
-      el.waterBtn.textContent = "今日は水やり済み";
-    }
-
-    checkBothWatered();
-  }
-
-  // ---------- 二人分揃ったら水を澄ませる ----------
-  function checkBothWatered(){
-    if(state.cleared) return;
-    if(state.watered.yamato && state.watered.sakura){
-      state.cleared = true;
-      setTimeout(() => {
-        el.waterLayer.classList.add("clear");
-        el.particles.classList.add("show");
-      }, 250); // 両方揃った余韻を少し置いてから澄ませる
-    }
-  }
-
-  // ---------- コメントシートの開閉 ----------
-  function openSheet(){
-    el.input.value = "";
-    el.sheetBackdrop.classList.add("show");
-    el.sheet.classList.add("show");
-    setTimeout(() => el.input.focus(), 250);
-  }
-  function closeSheet(){
-    el.sheetBackdrop.classList.remove("show");
-    el.sheet.classList.remove("show");
-  }
-
-  // ---------- イベント ----------
-  el.waterBtn.addEventListener("click", () => {
-    if(state.watered[ME]) return;
-    openSheet();
-  });
-
-  el.cancelBtn.addEventListener("click", closeSheet);
-  el.sheetBackdrop.addEventListener("click", closeSheet);
-
-  el.sendBtn.addEventListener("click", () => {
-    const text = el.input.value.trim();
-    closeSheet();
-    water(ME, "ヤマト", text); // 入力は任意。空でも送信可
-  });
-
-  // テスト用：相手（さくら）が水をあげた状態を再現
-  el.testBtn.addEventListener("click", () => {
-    if(state.watered.sakura) return;
-    water("sakura", "さくら", "今日もよろしくね");
-  });
-
+// ---------- 起動時：セッションがあればログイン画面をスキップ ----------
+(async function init(){
+  const { data: { session } } = await supabase.auth.getSession();
+  if(session) await enterApp(session);
 })();
 </script>
 
