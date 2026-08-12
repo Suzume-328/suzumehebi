@@ -510,7 +510,12 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 const SUPABASE_URL = "https://ndslunrqbesiawhaukel.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_nCfstmQdjsy4quRwBnqbDA_AGESJE2e";
 
-const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+  auth: {
+    persistSession: true,   // セッションを永続化し、毎回のログインを不要にする
+    autoRefreshToken: true, // アクセストークンを自動更新する
+  },
+});
 
 // メールアドレス → actor 判定
 const ACTOR_BY_EMAIL = {
