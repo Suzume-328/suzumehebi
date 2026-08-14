@@ -158,6 +158,16 @@
     opacity: 0.9;
     text-shadow: 0 1px 6px rgba(0,0,0,0.6);
   }
+  .anniversary{
+    display: none;
+    margin-bottom: 4px;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    color: #ffe9a8;
+    text-shadow: 0 1px 6px rgba(0,0,0,0.6), 0 0 14px rgba(255,220,140,0.55);
+  }
+  .anniversary.show{ display: block; }
 
   /* ---------- 下部UI ---------- */
   #bottom-ui{
@@ -263,6 +273,26 @@
     font-size: 9px;
     opacity: 0.6;
   }
+
+  /* ---------- 回想カード（過去のこの日／〇〇日前） ---------- */
+  #recollection-card{
+    max-height: 0;
+    margin-bottom: 0;
+    opacity: 0;
+    overflow: hidden;
+    font-size: 12px;
+    line-height: 1.6;
+    font-style: italic;
+    color: rgba(255,255,255,0.85);
+    text-shadow: 0 1px 4px rgba(0,0,0,0.6);
+    transition: max-height 0.8s ease, opacity 1.2s ease, margin-bottom 0.8s ease;
+  }
+  #recollection-card.show{
+    max-height: 80px;
+    margin-bottom: 10px;
+    opacity: 1;
+  }
+  #recollection-card .label{ opacity: 0.75; margin-right: 2px; }
 
   #water-btn{
     width: 100%;
@@ -465,7 +495,7 @@
 <div id="app" class="hide">
 
   <!-- 背景写真（今はダミー画像） -->
-  <img id="bg-photo" src="https://picsum.photos/seed/marimo-lake/900/1600" alt="">
+  <img id="bg-photo" src="https://picsum.photos/seed/marimo-lake/900/1600" alt="" crossorigin="anonymous">
 
   <!-- 水レイヤー -->
   <div id="water-layer" class="layer"></div>
@@ -528,6 +558,7 @@
   <div id="top-ui" class="layer">
     <div class="gradient-top"></div>
     <div class="title-box">
+      <div class="anniversary" id="anniversary-badge"></div>
       <div class="main">一緒に育てて <strong id="day-count">128</strong>日目</div>
       <div class="sub"><span id="marimo-color">みどり</span> <span id="marimo-size">42</span>mm</div>
     </div>
@@ -551,6 +582,8 @@
     <div class="log-box" id="log-box">
       <span class="name">さくら</span><span class="time">7:12</span><span class="text">「今日は雨だね」</span>
     </div>
+
+    <div id="recollection-card"></div>
 
     <button id="water-btn">水をあげる</button>
   </div>
@@ -660,6 +693,7 @@ const el = {
   loginError: document.getElementById("login-error"),
   app: document.getElementById("app"),
   bgPhoto: document.getElementById("bg-photo"),
+  anniversaryBadge: document.getElementById("anniversary-badge"),
   dayCount: document.getElementById("day-count"),
   colorName: document.getElementById("marimo-color"),
   sizeLabel: document.getElementById("marimo-size"),
@@ -680,6 +714,7 @@ const el = {
   historyBackdrop: document.getElementById("history-backdrop"),
   historySheet: document.getElementById("history-sheet"),
   historyList: document.getElementById("history-list"),
+  recollectionCard: document.getElementById("recollection-card"),
 };
 
 // ---------- 光の粒を生成 ----------
@@ -722,8 +757,27 @@ function renderMarimo(marimo){
 
   const started = new Date(marimo.started_on + "T00:00:00Z");
   const today = new Date(getLocalDate() + "T00:00:00Z");
-  const days = Math.floor((today - started) / 86400000) + 1;
-  el.dayCount.textContent = Math.max(1, days);
+  const days = Math.max(1, Math.floor((today - started) / 86400000) + 1);
+  el.dayCount.textContent = days;
+
+  renderAnniversary(days);
+}
+
+// ---------- 記念日バッジ（加点表示のみ。節目でなければ何も出さない） ----------
+function anniversaryLabel(days){
+  if(days % 365 === 0) return `今日で${days / 365}年`;
+  if(days % 100 === 0) return `今日で${days}日目`;
+  return null;
+}
+function renderAnniversary(days){
+  const label = anniversaryLabel(days);
+  if(label){
+    el.anniversaryBadge.textContent = "🎉 " + label;
+    el.anniversaryBadge.classList.add("show");
+  } else {
+    el.anniversaryBadge.classList.remove("show");
+    el.anniversaryBadge.textContent = "";
+  }
 }
 
 // ---------- 水位ゲージ・水の透明度を反映 ----------
@@ -792,6 +846,68 @@ async function fetchLogHistory(){
 function pickPlaceholder(){
   const idx = seededIndex("placeholder:" + getLocalDate(), COMMENT_PLACEHOLDERS.length);
   return COMMENT_PLACEHOLDERS[idx];
+}
+
+// ---------- 回想（過去のこの日／〇〇日前） ----------
+
+// 今日とMM-DDが一致する過去のログ（コメントあり）のうち、最も直近のもの（＝1年前の今日など）を返す
+async function fetchOnThisDayLog(todayLd){
+  const mmdd = todayLd.slice(5);
+  const { data, error } = await supabase
+    .from("log")
+    .select("actor, comment, local_date")
+    .not("comment", "is", null)
+    .neq("local_date", todayLd)
+    .order("local_date", { ascending: false });
+  if(error || !data) return null;
+
+  const match = data.find(r => r.comment && r.comment.trim() !== "" && r.local_date.slice(5) === mmdd);
+  return match || null;
+}
+
+// 30日以上前のログ（コメントあり）から1件をランダムに返す
+async function fetchOldLogForRecollection(todayLd){
+  const cutoff = addDaysToDateStr(todayLd, -30);
+  const { data, error } = await supabase
+    .from("log")
+    .select("actor, comment, local_date")
+    .not("comment", "is", null)
+    .lte("local_date", cutoff);
+  if(error || !data) return null;
+
+  const candidates = data.filter(r => r.comment && r.comment.trim() !== "");
+  if(candidates.length === 0) return null;
+  return candidates[Math.floor(Math.random() * candidates.length)];
+}
+
+// 表示する回想を1件決める。優先順位: ①今日とMM-DDが一致する過去ログ(確率100%) ②30日以上前から確率30%でランダム
+async function fetchRecollection(){
+  const todayLd = getLocalDate();
+
+  const exact = await fetchOnThisDayLog(todayLd);
+  if(exact){
+    const yearsAgo = parseInt(todayLd.slice(0, 4), 10) - parseInt(exact.local_date.slice(0, 4), 10);
+    const label = yearsAgo >= 1 ? `${yearsAgo}年前の今日` : "去年の今日"; // 念のためのフォールバック文言
+    return { row: exact, label };
+  }
+
+  if(Math.random() < 0.3){
+    const old = await fetchOldLogForRecollection(todayLd);
+    if(old){
+      const daysAgo = epochDays(todayLd) - epochDays(old.local_date);
+      return { row: old, label: `${daysAgo}日前` };
+    }
+  }
+  return null;
+}
+
+// 回想カードを静かにフェードイン表示する
+function renderRecollection(rec){
+  if(!rec) return;
+  el.recollectionCard.innerHTML =
+    '<span class="label">' + rec.label + "、" + ACTOR_NAME[rec.row.actor] + "はこう書いていた ——</span>" +
+    "「" + escapeHtml(rec.row.comment) + "」";
+  requestAnimationFrame(() => el.recollectionCard.classList.add("show"));
 }
 
 // ---------- 未精算の過去日を成長ロジックで精算する ----------
@@ -894,6 +1010,114 @@ async function applyBackgroundPhoto(){
   }
 }
 
+// ---------- 背景写真から配色を自動抽出 ----------
+// 平均色をそのまま使うとくすんだ灰色になりがちなので、HSLで彩度・明度を整えてから
+// 既存の水オーバーレイ用CSS変数 --water-green に反映する（オーバーレイのロジック自体は変更しない）
+function rgbToHsl(r, g, b){
+  r /= 255; g /= 255; b /= 255;
+  const max = Math.max(r, g, b), min = Math.min(r, g, b);
+  let h = 0, s = 0;
+  const l = (max + min) / 2;
+  if(max !== min){
+    const d = max - min;
+    s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+    switch(max){
+      case r: h = (g - b) / d + (g < b ? 6 : 0); break;
+      case g: h = (b - r) / d + 2; break;
+      default: h = (r - g) / d + 4; break;
+    }
+    h /= 6;
+  }
+  return [h * 360, s * 100, l * 100];
+}
+function hslToRgb(h, s, l){
+  h /= 360; s /= 100; l /= 100;
+  const hue2rgb = (p, q, t) => {
+    if(t < 0) t += 1;
+    if(t > 1) t -= 1;
+    if(t < 1 / 6) return p + (q - p) * 6 * t;
+    if(t < 1 / 2) return q;
+    if(t < 2 / 3) return p + (q - p) * (2 / 3 - t) * 6;
+    return p;
+  };
+  let r, g, b;
+  if(s === 0){ r = g = b = l; }
+  else {
+    const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+    const p = 2 * l - q;
+    r = hue2rgb(p, q, h + 1 / 3);
+    g = hue2rgb(p, q, h);
+    b = hue2rgb(p, q, h - 1 / 3);
+  }
+  return [Math.round(r * 255), Math.round(g * 255), Math.round(b * 255)];
+}
+
+// 画像を小さく描いて平均色を取る（CORSでcanvasが汚染された場合はnullを返す）
+function extractAverageColor(imgEl){
+  try {
+    const size = 24;
+    const canvas = document.createElement("canvas");
+    canvas.width = size;
+    canvas.height = size;
+    const ctx = canvas.getContext("2d");
+    ctx.drawImage(imgEl, 0, 0, size, size);
+    const { data } = ctx.getImageData(0, 0, size, size);
+    let r = 0, g = 0, b = 0;
+    const count = data.length / 4;
+    for(let i = 0; i < data.length; i += 4){
+      r += data[i]; g += data[i + 1]; b += data[i + 2];
+    }
+    return [Math.round(r / count), Math.round(g / count), Math.round(b / count)];
+  } catch(e){
+    return null; // フォールバック：色は変えない
+  }
+}
+
+// 色相は円環なので、最短経路でtの割合だけ目標の色相h2へ寄せる
+function blendHue(h1, h2, t){
+  const diff = ((h2 - h1 + 540) % 360) - 180;
+  return (h1 + diff * t + 360) % 360;
+}
+
+// 時間帯（JST）による軽い補正。写真から抽出した色を土台に、その上から控えめに乗せるだけ
+function timeOfDayAdjust(h, s, l){
+  const hourParts = new Intl.DateTimeFormat("ja-JP", { timeZone: "Asia/Tokyo", hour: "2-digit", hourCycle: "h23" }).formatToParts(new Date());
+  const hour = parseInt(hourParts.find(p => p.type === "hour").value, 10);
+
+  if(hour >= 5 && hour < 10){
+    // 朝: 明度を少し上げる
+    return [h, s, clamp(l + 6, 0, 100)];
+  }
+  if(hour >= 10 && hour < 16){
+    // 昼: そのまま
+    return [h, s, l];
+  }
+  if(hour >= 16 && hour < 19){
+    // 夕: 少し暖色（オレンジ）に寄せる
+    return [blendHue(h, 30, 0.25), clamp(s + 5, 0, 100), l];
+  }
+  // 夜(19-5時): 明度を下げて深い色に
+  return [blendHue(h, 220, 0.15), s, clamp(l - 10, 0, 100)];
+}
+
+function applyTintFromPhoto(imgEl){
+  const rgb = extractAverageColor(imgEl);
+  if(!rgb) return;
+  let [h, s, l] = rgbToHsl(...rgb);
+  s = Math.max(s, 45); // 彩度を底上げして写真らしい色味を出す
+  l = clamp(l, 32, 55); // オーバーレイに使うので明るすぎ・暗すぎを避ける
+  [h, s, l] = timeOfDayAdjust(h, s, l); // 時間帯による控えめな補正を上から乗せる
+  const [tr, tg, tb] = hslToRgb(h, s, l);
+  document.documentElement.style.setProperty("--water-green", `${tr}, ${tg}, ${tb}`);
+}
+
+// 背景写真の読み込み完了のたびに配色を反映する
+(function setupColorExtraction(){
+  const run = () => applyTintFromPhoto(el.bgPhoto);
+  el.bgPhoto.addEventListener("load", run);
+  if(el.bgPhoto.complete && el.bgPhoto.naturalWidth > 0) run(); // 既に読み込み済みなら即実行
+})();
+
 // ---------- 画面全体を最新状態で描画 ----------
 async function loadAndRender(){
   let { data: marimo, error: marimoErr } = await supabase.from("marimo").select("*").eq("id", 1).single();
@@ -946,6 +1170,10 @@ async function water(comment){
       if(!updateErr && updated) renderMarimo(updated);
     }
   }
+
+  // 水やり完了時、過去の回想があれば少し間を置いて静かに表示する
+  const recollection = await fetchRecollection();
+  if(recollection) setTimeout(() => renderRecollection(recollection), 600);
 }
 
 // ---------- コメントシートの開閉 ----------
