@@ -38,6 +38,7 @@
     margin: 0 auto; /* 中央寄せ */
     overflow: hidden;
     isolation: isolate; /* 子要素のz-indexを閉じ込める */
+    touch-action: pan-y; /* 横スワイプはJS側で処理するため、ブラウザ標準の横方向ジェスチャーを抑制 */
   }
 
   .layer{
@@ -424,6 +425,98 @@
     text-align: center;
   }
 
+  /* ---------- 写真管理画面（ホームから左スワイプで開く） ---------- */
+  #photo-screen{
+    position: absolute;
+    inset: 0;
+    z-index: 50;
+    display: flex;
+    flex-direction: column;
+    background: #12241d;
+    transform: translateX(100%);
+    transition: transform 0.3s cubic-bezier(.22,.9,.4,1);
+  }
+  #photo-screen.show{ transform: translateX(0); }
+  #photo-screen-header{
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-shrink: 0;
+    padding: calc(var(--safe-t) + 16px) calc(var(--safe-r) + 16px) 12px calc(var(--safe-l) + 20px);
+  }
+  #photo-screen-header h2{
+    margin: 0;
+    font-size: 15px;
+    font-weight: 700;
+  }
+  #photo-close-btn{
+    width: 30px;
+    height: 30px;
+    border-radius: 50%;
+    border: none;
+    background: rgba(255,255,255,0.12);
+    color: #fff;
+    font-size: 14px;
+    line-height: 1;
+    cursor: pointer;
+  }
+  #photo-grid{
+    flex: 1;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 6px;
+    padding: 0 calc(var(--safe-r) + 16px) 12px calc(var(--safe-l) + 16px);
+  }
+  .photo-item{
+    position: relative;
+    aspect-ratio: 1 / 1;
+    border-radius: 8px;
+    overflow: hidden;
+    background: rgba(255,255,255,0.06);
+    user-select: none;
+    -webkit-user-select: none;
+  }
+  .photo-item img{
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+    pointer-events: none; /* 長押し判定はitem側で行う */
+  }
+  .photo-item.deleting{ opacity: 0.4; }
+  #photo-empty{
+    grid-column: 1 / -1;
+    padding: 24px 0;
+    font-size: 12.5px;
+    opacity: 0.7;
+    text-align: center;
+  }
+  #photo-screen-footer{
+    flex-shrink: 0;
+    padding: 12px calc(var(--safe-r) + 20px) calc(var(--safe-b) + 16px) calc(var(--safe-l) + 20px);
+  }
+  #add-photo-btn{
+    width: 100%;
+    padding: 13px 0;
+    font-size: 14.5px;
+    font-weight: 700;
+    color: #14382c;
+    background: linear-gradient(180deg, #eafff2, #bdeccd);
+    border: none;
+    border-radius: 999px;
+    cursor: pointer;
+  }
+  #add-photo-btn:disabled{ opacity: 0.55; }
+  #upload-progress{
+    min-height: 16px;
+    margin-top: 8px;
+    font-size: 12px;
+    text-align: center;
+    opacity: 0.85;
+  }
+
   /* ---------- ログイン画面 ---------- */
   #login-screen{
     position: fixed;
@@ -607,6 +700,20 @@
     <div id="history-list"></div>
   </div>
 
+  <!-- 写真管理画面（ホームから左スワイプで開く） -->
+  <div id="photo-screen">
+    <div id="photo-screen-header">
+      <h2>わたしの写真</h2>
+      <button id="photo-close-btn" aria-label="閉じる">✕</button>
+    </div>
+    <div id="photo-grid"></div>
+    <div id="photo-screen-footer">
+      <button id="add-photo-btn">写真を追加</button>
+      <input type="file" id="photo-file-input" accept="image/*" multiple hidden>
+      <div id="upload-progress"></div>
+    </div>
+  </div>
+
 </div>
 
 <script type="module">
@@ -633,6 +740,7 @@ const ACTOR_NAME = { yamato: "ヤマト", sakura: "さくら" };
 // 背景写真（Supabase Storage）
 const PHOTO_BUCKET = "photos"; // yamato/ と sakura/ フォルダを持つ非公開バケット
 const DEFAULT_BG_URL = "https://picsum.photos/seed/marimo-lake/900/1600"; // 取得失敗時のフォールバック
+const MAX_UPLOAD_LONG_SIDE = 1200; // アップロード時のリサイズ先（長辺px）
 
 // コメント入力のプレースホルダー（日替わり）
 const COMMENT_PLACEHOLDERS = [
@@ -715,6 +823,12 @@ const el = {
   historySheet: document.getElementById("history-sheet"),
   historyList: document.getElementById("history-list"),
   recollectionCard: document.getElementById("recollection-card"),
+  photoScreen: document.getElementById("photo-screen"),
+  photoCloseBtn: document.getElementById("photo-close-btn"),
+  photoGrid: document.getElementById("photo-grid"),
+  addPhotoBtn: document.getElementById("add-photo-btn"),
+  photoFileInput: document.getElementById("photo-file-input"),
+  uploadProgress: document.getElementById("upload-progress"),
 };
 
 // ---------- 光の粒を生成 ----------
@@ -1256,6 +1370,289 @@ el.historyBackdrop.addEventListener("click", closeHistory);
     openHistory();
   });
 })();
+
+// ---------- 写真管理画面（ホームから左スワイプで開く） ----------
+
+function openPhotoScreen(){
+  el.photoScreen.classList.add("show");
+  loadMyPhotos();
+}
+function closePhotoScreen(){
+  el.photoScreen.classList.remove("show");
+}
+el.photoCloseBtn.addEventListener("click", closePhotoScreen);
+
+// ホーム画面全体での横スワイプ判定。既存の上スワイプ（ログ履歴）・他のシートとは軸・状態で分離する
+(function setupPhotoScreenSwipe(){
+  const EDGE_GUARD_PX = 30;   // iOSの戻るジェスチャーと競合するため、画面左端はスワイプ起点として無視
+  const MIN_DX = 60;          // 横移動量の下限
+  const AXIS_RATIO = 1.5;     // 横移動が縦移動の何倍以上あれば「横スワイプ」とみなすか
+
+  let startX = null, startY = null, startedNearEdge = false;
+
+  function anyOtherSheetOpen(){
+    return el.sheet.classList.contains("show") || el.historySheet.classList.contains("show");
+  }
+
+  el.app.addEventListener("touchstart", (e) => {
+    const t = e.touches[0];
+    startX = t.clientX;
+    startY = t.clientY;
+    startedNearEdge = t.clientX <= EDGE_GUARD_PX;
+  }, { passive: true });
+
+  el.app.addEventListener("touchend", (e) => {
+    if(startX === null) return;
+    const t = e.changedTouches[0];
+    const dx = t.clientX - startX;
+    const dy = t.clientY - startY;
+    const edge = startedNearEdge;
+    startX = null; startY = null; startedNearEdge = false;
+
+    if(edge) return; // 画面端30px以内から始まったスワイプは無視
+    if(Math.abs(dx) < MIN_DX) return;
+    if(Math.abs(dx) < Math.abs(dy) * AXIS_RATIO) return; // 斜め・縦方向優位なら無視（上スワイプのログ履歴と分離）
+
+    const photoOpen = el.photoScreen.classList.contains("show");
+    if(dx < 0 && !photoOpen && !anyOtherSheetOpen()){
+      openPhotoScreen(); // 左スワイプ → 開く
+    } else if(dx > 0 && photoOpen){
+      closePhotoScreen(); // 右スワイプ → 閉じる
+    }
+  }, { passive: true });
+})();
+
+// 自分のフォルダの写真一覧をグリッド表示
+async function loadMyPhotos(){
+  el.photoGrid.innerHTML = '<div id="photo-empty">読み込み中…</div>';
+
+  const list = await listPhotosWithDate(ME); // 既存の一覧取得ロジックを再利用（ファイル名順）
+  if(list.length === 0){
+    el.photoGrid.innerHTML = '<div id="photo-empty">まだ写真がありません</div>';
+    return;
+  }
+  const sorted = [...list].sort((a, b) => (a.name < b.name ? 1 : a.name > b.name ? -1 : 0)); // 新しい順
+
+  const paths = sorted.map(f => `${ME}/${f.name}`);
+  const { data: signedList, error } = await supabase.storage.from(PHOTO_BUCKET).createSignedUrls(paths, 60 * 60);
+  if(error || !signedList){
+    el.photoGrid.innerHTML = '<div id="photo-empty">読み込みに失敗しました</div>';
+    return;
+  }
+
+  el.photoGrid.innerHTML = "";
+  signedList.forEach((signed, i) => {
+    if(!signed || signed.error || !signed.signedUrl) return;
+    const name = sorted[i].name;
+
+    const item = document.createElement("div");
+    item.className = "photo-item";
+    const img = document.createElement("img");
+    img.src = signed.signedUrl;
+    img.loading = "lazy";
+    img.alt = "";
+    item.appendChild(img);
+
+    attachLongPressDelete(item, name);
+    el.photoGrid.appendChild(item);
+  });
+}
+
+// 長押しで削除確認 → 削除（自分のフォルダの写真のみ）
+function attachLongPressDelete(itemEl, fileName){
+  const LONG_PRESS_MS = 600;
+  let timer = null;
+
+  const start = () => {
+    timer = setTimeout(() => {
+      timer = null;
+      confirmAndDeletePhoto(itemEl, fileName);
+    }, LONG_PRESS_MS);
+  };
+  const cancel = () => {
+    if(timer){ clearTimeout(timer); timer = null; }
+  };
+
+  itemEl.addEventListener("touchstart", start, { passive: true });
+  itemEl.addEventListener("touchend", cancel, { passive: true });
+  itemEl.addEventListener("touchmove", cancel, { passive: true });
+  itemEl.addEventListener("touchcancel", cancel, { passive: true });
+  // PCでの確認用（マウス長押し）
+  itemEl.addEventListener("mousedown", start);
+  itemEl.addEventListener("mouseup", cancel);
+  itemEl.addEventListener("mouseleave", cancel);
+}
+async function confirmAndDeletePhoto(itemEl, fileName){
+  if(!confirm("この写真を削除しますか？")) return;
+  itemEl.classList.add("deleting");
+  const { error } = await supabase.storage.from(PHOTO_BUCKET).remove([`${ME}/${fileName}`]);
+  if(error){
+    console.error(error);
+    itemEl.classList.remove("deleting");
+    alert("削除に失敗しました。もう一度お試しください。");
+    return;
+  }
+  itemEl.remove();
+}
+
+// ---------- 写真アップロード（リサイズ・orientation補正・EXIF日時ファイル名） ----------
+
+function loadImageElement(src){
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = reject;
+    img.src = src;
+  });
+}
+
+// JPEGのAPP1(EXIF)セグメントを手読みして DateTimeOriginal と Orientation を取り出す。
+// JPEG以外・解析に失敗した場合は orientation:1 / dateStr:null を返す（呼び出し側で0000-00-00にフォールバック）
+async function readExifDateAndOrientation(file){
+  try {
+    const buf = await file.arrayBuffer();
+    const view = new DataView(buf);
+    if(view.getUint16(0) !== 0xFFD8) return { dateStr: null, orientation: 1 };
+
+    let offset = 2;
+    let orientation = 1;
+    let dateStr = null;
+
+    while(offset + 4 <= view.byteLength){
+      const marker = view.getUint16(offset);
+      if((marker & 0xFF00) !== 0xFF00) break; // マーカーでなくなったら終了
+
+      if(marker === 0xFFD9 || marker === 0xFFDA) break; // 画像データ開始/EOF
+
+      const segLength = view.getUint16(offset + 2);
+
+      if(marker === 0xFFE1 && view.getUint32(offset + 4) === 0x45786966){ // "Exif"
+        const tiffStart = offset + 10;
+        const little = view.getUint16(tiffStart) === 0x4949;
+        const getU16 = (o) => view.getUint16(o, little);
+        const getU32 = (o) => view.getUint32(o, little);
+
+        const ifd0Offset = tiffStart + getU32(tiffStart + 4);
+        const entries0 = getU16(ifd0Offset);
+        let exifIfdOffset = null;
+
+        for(let i = 0; i < entries0; i++){
+          const entryOffset = ifd0Offset + 2 + i * 12;
+          const tag = getU16(entryOffset);
+          if(tag === 0x0112) orientation = getU16(entryOffset + 8); // Orientation
+          if(tag === 0x8769) exifIfdOffset = tiffStart + getU32(entryOffset + 8); // Exif IFDへのポインタ
+        }
+
+        if(exifIfdOffset){
+          const entriesExif = getU16(exifIfdOffset);
+          for(let i = 0; i < entriesExif; i++){
+            const entryOffset = exifIfdOffset + 2 + i * 12;
+            const tag = getU16(entryOffset);
+            if(tag === 0x9003){ // DateTimeOriginal
+              const strOffset = tiffStart + getU32(entryOffset + 8);
+              let str = "";
+              for(let j = 0; j < 19; j++) str += String.fromCharCode(view.getUint8(strOffset + j));
+              const m = str.match(/^(\d{4}):(\d{2}):(\d{2})/);
+              if(m) dateStr = `${m[1]}-${m[2]}-${m[3]}`;
+              break;
+            }
+          }
+        }
+      }
+      offset += 2 + segLength;
+    }
+    return { dateStr, orientation };
+  } catch(e){
+    return { dateStr: null, orientation: 1 };
+  }
+}
+
+// EXIF orientationに応じたcanvas変換（1/未定義は補正不要）
+function applyOrientationTransform(ctx, orientation, width, height){
+  switch(orientation){
+    case 2: ctx.transform(-1, 0, 0, 1, width, 0); break;
+    case 3: ctx.transform(-1, 0, 0, -1, width, height); break;
+    case 4: ctx.transform(1, 0, 0, -1, 0, height); break;
+    case 5: ctx.transform(0, 1, 1, 0, 0, 0); break;
+    case 6: ctx.transform(0, 1, -1, 0, height, 0); break;
+    case 7: ctx.transform(0, -1, -1, 0, height, width); break;
+    case 8: ctx.transform(0, -1, 1, 0, 0, width); break;
+    default: break;
+  }
+}
+
+// 長辺1200pxにリサイズ（拡大なし）・orientation補正・JPEG化。EXIF日時が無ければ dateStr は null を返す
+async function processImageForUpload(file){
+  const { dateStr, orientation } = await readExifDateAndOrientation(file);
+  const objectUrl = URL.createObjectURL(file);
+
+  try {
+    const img = await loadImageElement(objectUrl);
+    const srcW = img.naturalWidth, srcH = img.naturalHeight;
+
+    const longSide = Math.max(srcW, srcH);
+    const scale = Math.min(1, MAX_UPLOAD_LONG_SIDE / longSide); // 拡大はしない
+    const drawW = Math.round(srcW * scale);
+    const drawH = Math.round(srcH * scale);
+
+    const swapDims = orientation >= 5 && orientation <= 8; // 90度系の回転は縦横が入れ替わる
+    const canvas = document.createElement("canvas");
+    canvas.width = swapDims ? drawH : drawW;
+    canvas.height = swapDims ? drawW : drawH;
+
+    const ctx = canvas.getContext("2d");
+    applyOrientationTransform(ctx, orientation, drawW, drawH);
+    ctx.drawImage(img, 0, 0, drawW, drawH);
+
+    const blob = await new Promise(resolve => canvas.toBlob(resolve, "image/jpeg", 0.85));
+    return { blob, dateStr };
+  } finally {
+    URL.revokeObjectURL(objectUrl);
+  }
+}
+
+el.addPhotoBtn.addEventListener("click", () => el.photoFileInput.click());
+el.photoFileInput.addEventListener("change", async (e) => {
+  const files = Array.from(e.target.files || []);
+  e.target.value = ""; // 同じファイルを続けて選び直せるようにする
+  if(files.length > 0) await uploadPhotos(files);
+});
+
+async function uploadPhotos(files){
+  el.addPhotoBtn.disabled = true;
+
+  // 既存ファイルから日付ごとの連番の続きを把握しておく（衝突防止）
+  const existing = await listPhotosWithDate(ME);
+  const seqByDate = {};
+  for(const f of existing) seqByDate[f.date] = (seqByDate[f.date] || 0) + 1;
+
+  let done = 0;
+  el.uploadProgress.textContent = `アップロード中 ${done}/${files.length}`;
+
+  for(const file of files){
+    try {
+      const { blob, dateStr } = await processImageForUpload(file);
+      const date = dateStr || "0000-00-00"; // EXIFが無ければ0000-00-00
+      seqByDate[date] = (seqByDate[date] || 0) + 1;
+      const fileName = `${date}_${String(seqByDate[date]).padStart(3, "0")}.jpg`;
+
+      const { error } = await supabase.storage
+        .from(PHOTO_BUCKET)
+        .upload(`${ME}/${fileName}`, blob, { contentType: "image/jpeg", upsert: false });
+      if(error) throw error;
+    } catch(err){
+      console.error(err);
+    }
+    done++;
+    el.uploadProgress.textContent = `アップロード中 ${done}/${files.length}`;
+  }
+
+  el.uploadProgress.textContent = `完了（${done}/${files.length}件）`;
+  setTimeout(() => { el.uploadProgress.textContent = ""; }, 3000);
+
+  el.addPhotoBtn.disabled = false;
+  await loadMyPhotos();
+}
 
 // ---------- ログイン ----------
 el.loginForm.addEventListener("submit", async (e) => {
