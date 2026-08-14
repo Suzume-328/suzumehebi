@@ -437,21 +437,37 @@
     transition: transform 0.3s cubic-bezier(.22,.9,.4,1);
   }
   #photo-screen.show{ transform: translateX(0); }
-  #photo-screen-header{
+  #photo-screen-header, #trash-screen-header{
     display: flex;
     align-items: center;
     justify-content: space-between;
     flex-shrink: 0;
     padding: calc(var(--safe-t) + 16px) calc(var(--safe-r) + 16px) 12px calc(var(--safe-l) + 20px);
   }
-  #photo-screen-header h2{
+  #photo-screen-header h2, #trash-screen-header h2{
     margin: 0;
     font-size: 15px;
     font-weight: 700;
   }
-  #photo-close-btn{
+  #photo-header-btns{
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .header-btn{
+    padding: 6px 12px;
+    border-radius: 999px;
+    border: none;
+    background: rgba(255,255,255,0.12);
+    color: #fff;
+    font-size: 12px;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  #photo-close-btn, #trash-close-btn{
     width: 30px;
     height: 30px;
+    flex-shrink: 0;
     border-radius: 50%;
     border: none;
     background: rgba(255,255,255,0.12);
@@ -460,6 +476,28 @@
     line-height: 1;
     cursor: pointer;
   }
+
+  /* ---------- 選択モードのツールバー ---------- */
+  #select-toolbar{
+    display: none;
+    align-items: center;
+    gap: 8px;
+    flex-shrink: 0;
+    padding: 0 calc(var(--safe-r) + 16px) 10px calc(var(--safe-l) + 20px);
+  }
+  #photo-screen.selecting #photo-header-btns{ display: none; }
+  #photo-screen.selecting #select-toolbar{ display: flex; }
+  #select-toolbar button{
+    padding: 6px 10px;
+    border-radius: 999px;
+    border: none;
+    background: rgba(255,255,255,0.12);
+    color: #fff;
+    font-size: 11.5px;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  #select-cancel-btn{ margin-left: auto; }
   #photo-grid{
     flex: 1;
     overflow-y: auto;
@@ -483,32 +521,63 @@
     height: 100%;
     object-fit: cover;
     display: block;
-    pointer-events: none; /* 長押し判定はitem側で行う */
+    pointer-events: none; /* 長押し・タップ判定はitem側で行う */
   }
   .photo-item.deleting{ opacity: 0.4; }
-  #photo-empty{
+  .photo-item.selected img{ opacity: 0.55; }
+  .photo-item .check{
+    display: none;
+    position: absolute;
+    top: 4px;
+    right: 4px;
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    border: 2px solid rgba(255,255,255,0.85);
+    background: rgba(0,0,0,0.25);
+    align-items: center;
+    justify-content: center;
+    font-size: 12px;
+    font-weight: 700;
+    color: #fff;
+  }
+  #photo-screen.selecting .photo-item .check{ display: flex; }
+  .photo-item.selected .check{
+    background: #4f9a45;
+    border-color: #4f9a45;
+  }
+  #photo-empty, #trash-empty{
     grid-column: 1 / -1;
     padding: 24px 0;
     font-size: 12.5px;
     opacity: 0.7;
     text-align: center;
   }
-  #photo-screen-footer{
+  #photo-screen-footer, #trash-screen-footer{
     flex-shrink: 0;
     padding: 12px calc(var(--safe-r) + 20px) calc(var(--safe-b) + 16px) calc(var(--safe-l) + 20px);
   }
-  #add-photo-btn{
+  #add-photo-btn, #delete-selected-btn, #restore-all-btn{
     width: 100%;
     padding: 13px 0;
     font-size: 14.5px;
     font-weight: 700;
-    color: #14382c;
-    background: linear-gradient(180deg, #eafff2, #bdeccd);
     border: none;
     border-radius: 999px;
     cursor: pointer;
   }
-  #add-photo-btn:disabled{ opacity: 0.55; }
+  #add-photo-btn, #restore-all-btn{
+    color: #14382c;
+    background: linear-gradient(180deg, #eafff2, #bdeccd);
+  }
+  #delete-selected-btn{
+    display: none;
+    color: #ffe3e3;
+    background: rgba(220,80,80,0.55);
+  }
+  #photo-screen.selecting #add-photo-btn{ display: none; }
+  #photo-screen.selecting #delete-selected-btn{ display: block; }
+  #add-photo-btn:disabled, #delete-selected-btn:disabled, #restore-all-btn:disabled{ opacity: 0.55; }
   #upload-progress{
     min-height: 16px;
     margin-top: 8px;
@@ -516,6 +585,88 @@
     text-align: center;
     opacity: 0.85;
   }
+
+  /* ---------- 削除の取り消しトースト ---------- */
+  #undo-toast{
+    position: absolute;
+    left: 16px;
+    right: 16px;
+    bottom: calc(var(--safe-b) + 16px);
+    z-index: 60;
+    display: none;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 12px 16px;
+    background: #223a30;
+    border-radius: 14px;
+    box-shadow: 0 6px 20px rgba(0,0,0,0.4);
+    font-size: 13px;
+  }
+  #undo-toast.show{ display: flex; }
+  #undo-text{ opacity: 0.9; }
+  #undo-btn{
+    flex-shrink: 0;
+    padding: 8px 14px;
+    border-radius: 999px;
+    border: none;
+    background: #bdeccd;
+    color: #14382c;
+    font-weight: 700;
+    font-size: 12.5px;
+    cursor: pointer;
+  }
+
+  /* ---------- ゴミ箱画面 ---------- */
+  #trash-screen{
+    position: absolute;
+    inset: 0;
+    z-index: 55; /* 写真管理画面よりさらに前面 */
+    display: flex;
+    flex-direction: column;
+    background: #12241d;
+    transform: translateX(100%);
+    transition: transform 0.3s cubic-bezier(.22,.9,.4,1);
+  }
+  #trash-screen.show{ transform: translateX(0); }
+  #trash-grid{
+    flex: 1;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 8px;
+    padding: 0 calc(var(--safe-r) + 16px) 12px calc(var(--safe-l) + 16px);
+  }
+  .trash-item{
+    border-radius: 10px;
+    overflow: hidden;
+    background: rgba(255,255,255,0.06);
+    display: flex;
+    flex-direction: column;
+  }
+  .trash-item img{
+    width: 100%;
+    aspect-ratio: 1 / 1;
+    object-fit: cover;
+    display: block;
+  }
+  .trash-item .actions{
+    display: flex;
+    gap: 4px;
+    padding: 6px;
+  }
+  .trash-item .actions button{
+    flex: 1;
+    padding: 7px 0;
+    font-size: 11px;
+    font-weight: 700;
+    border-radius: 8px;
+    border: none;
+    cursor: pointer;
+  }
+  .trash-restore-btn{ background: #bdeccd; color: #14382c; }
+  .trash-purge-btn{ background: rgba(220,80,80,0.55); color: #ffe3e3; }
 
   /* ---------- ログイン画面 ---------- */
   #login-screen{
@@ -703,14 +854,40 @@
   <!-- 写真管理画面（ホームから左スワイプで開く） -->
   <div id="photo-screen">
     <div id="photo-screen-header">
-      <h2>わたしの写真</h2>
-      <button id="photo-close-btn" aria-label="閉じる">✕</button>
+      <h2 id="photo-header-title">わたしの写真</h2>
+      <div id="photo-header-btns">
+        <button id="select-mode-btn" class="header-btn">選択</button>
+        <button id="trash-open-btn" class="header-btn">ゴミ箱</button>
+        <button id="photo-close-btn" aria-label="閉じる">✕</button>
+      </div>
+    </div>
+    <div id="select-toolbar">
+      <button id="select-all-btn">すべて選択</button>
+      <button id="select-none-btn">選択解除</button>
+      <button id="select-cancel-btn">キャンセル</button>
     </div>
     <div id="photo-grid"></div>
     <div id="photo-screen-footer">
       <button id="add-photo-btn">写真を追加</button>
+      <button id="delete-selected-btn">削除</button>
       <input type="file" id="photo-file-input" accept="image/*" multiple hidden>
       <div id="upload-progress"></div>
+    </div>
+    <div id="undo-toast">
+      <span id="undo-text"></span>
+      <button id="undo-btn">取り消す</button>
+    </div>
+  </div>
+
+  <!-- ゴミ箱画面 -->
+  <div id="trash-screen">
+    <div id="trash-screen-header">
+      <h2>ゴミ箱</h2>
+      <button id="trash-close-btn" aria-label="閉じる">✕</button>
+    </div>
+    <div id="trash-grid"></div>
+    <div id="trash-screen-footer">
+      <button id="restore-all-btn">すべて復元</button>
     </div>
   </div>
 
@@ -825,10 +1002,25 @@ const el = {
   recollectionCard: document.getElementById("recollection-card"),
   photoScreen: document.getElementById("photo-screen"),
   photoCloseBtn: document.getElementById("photo-close-btn"),
+  photoHeaderTitle: document.getElementById("photo-header-title"),
   photoGrid: document.getElementById("photo-grid"),
   addPhotoBtn: document.getElementById("add-photo-btn"),
   photoFileInput: document.getElementById("photo-file-input"),
   uploadProgress: document.getElementById("upload-progress"),
+  selectModeBtn: document.getElementById("select-mode-btn"),
+  selectToolbar: document.getElementById("select-toolbar"),
+  selectAllBtn: document.getElementById("select-all-btn"),
+  selectNoneBtn: document.getElementById("select-none-btn"),
+  selectCancelBtn: document.getElementById("select-cancel-btn"),
+  deleteSelectedBtn: document.getElementById("delete-selected-btn"),
+  undoToast: document.getElementById("undo-toast"),
+  undoText: document.getElementById("undo-text"),
+  undoBtn: document.getElementById("undo-btn"),
+  trashOpenBtn: document.getElementById("trash-open-btn"),
+  trashScreen: document.getElementById("trash-screen"),
+  trashCloseBtn: document.getElementById("trash-close-btn"),
+  trashGrid: document.getElementById("trash-grid"),
+  restoreAllBtn: document.getElementById("restore-all-btn"),
 };
 
 // ---------- 光の粒を生成 ----------
@@ -1374,6 +1566,7 @@ el.historyBackdrop.addEventListener("click", closeHistory);
 // ---------- 写真管理画面（ホームから左スワイプで開く） ----------
 
 function openPhotoScreen(){
+  exitSelectMode(); // 開くたびに選択状態をリセット
   el.photoScreen.classList.add("show");
   loadMyPhotos();
 }
@@ -1381,6 +1574,10 @@ function closePhotoScreen(){
   el.photoScreen.classList.remove("show");
 }
 el.photoCloseBtn.addEventListener("click", closePhotoScreen);
+
+// ---------- 複数選択モードの状態 ----------
+let selectionMode = false;
+let selectedNames = new Set();
 
 // ホーム画面全体での横スワイプ判定。既存の上スワイプ（ログ履歴）・他のシートとは軸・状態で分離する
 (function setupPhotoScreenSwipe(){
@@ -1416,8 +1613,8 @@ el.photoCloseBtn.addEventListener("click", closePhotoScreen);
     const photoOpen = el.photoScreen.classList.contains("show");
     if(dx < 0 && !photoOpen && !anyOtherSheetOpen()){
       openPhotoScreen(); // 左スワイプ → 開く
-    } else if(dx > 0 && photoOpen){
-      closePhotoScreen(); // 右スワイプ → 閉じる
+    } else if(dx > 0 && photoOpen && !selectionMode){
+      closePhotoScreen(); // 右スワイプ → 閉じる（選択モード中はドラッグ選択と競合するため無効）
     }
   }, { passive: true });
 })();
@@ -1447,18 +1644,25 @@ async function loadMyPhotos(){
 
     const item = document.createElement("div");
     item.className = "photo-item";
+    item.dataset.name = name;
+
     const img = document.createElement("img");
     img.src = signed.signedUrl;
     img.loading = "lazy";
     img.alt = "";
     item.appendChild(img);
 
+    const check = document.createElement("div");
+    check.className = "check";
+    item.appendChild(check);
+
     attachLongPressDelete(item, name);
+    attachSelectToggle(item, name);
     el.photoGrid.appendChild(item);
   });
 }
 
-// 長押しで削除確認 → 削除（自分のフォルダの写真のみ）
+// 長押しで削除確認 → ゴミ箱へ移動（自分のフォルダの写真のみ。選択モードの有無にかかわらず使える単発削除）
 function attachLongPressDelete(itemEl, fileName){
   const LONG_PRESS_MS = 600;
   let timer = null;
@@ -1483,9 +1687,9 @@ function attachLongPressDelete(itemEl, fileName){
   itemEl.addEventListener("mouseleave", cancel);
 }
 async function confirmAndDeletePhoto(itemEl, fileName){
-  if(!confirm("この写真を削除しますか？")) return;
+  if(!confirm("この写真をゴミ箱に移動しますか？")) return;
   itemEl.classList.add("deleting");
-  const { error } = await supabase.storage.from(PHOTO_BUCKET).remove([`${ME}/${fileName}`]);
+  const { error, from, to } = await moveToTrash(ME, fileName);
   if(error){
     console.error(error);
     itemEl.classList.remove("deleting");
@@ -1493,7 +1697,300 @@ async function confirmAndDeletePhoto(itemEl, fileName){
     return;
   }
   itemEl.remove();
+  showUndoToast([{ from, to }]);
 }
+
+// タップで選択トグル（選択モード中のみ有効。ドラッグ選択の直後は無視する）
+function attachSelectToggle(itemEl, fileName){
+  itemEl.addEventListener("click", () => {
+    if(!selectionMode || dragJustSelected) return;
+    togglePhotoSelection(itemEl, fileName);
+  });
+}
+
+// ---------- 複数選択モード ----------
+function enterSelectMode(){
+  selectionMode = true;
+  selectedNames.clear();
+  el.photoScreen.classList.add("selecting");
+  updateSelectionUI();
+}
+function exitSelectMode(){
+  selectionMode = false;
+  selectedNames.clear();
+  el.photoScreen.classList.remove("selecting");
+  el.photoGrid.querySelectorAll(".photo-item.selected").forEach(item => item.classList.remove("selected"));
+  updateSelectionUI();
+}
+function updateSelectionUI(){
+  el.photoHeaderTitle.textContent = selectionMode ? `${selectedNames.size}枚選択中` : "わたしの写真";
+  el.deleteSelectedBtn.disabled = selectedNames.size === 0;
+  el.deleteSelectedBtn.textContent = selectedNames.size > 0 ? `削除（${selectedNames.size}）` : "削除";
+}
+function togglePhotoSelection(itemEl, fileName){
+  if(selectedNames.has(fileName)){
+    selectedNames.delete(fileName);
+    itemEl.classList.remove("selected");
+  } else {
+    selectedNames.add(fileName);
+    itemEl.classList.add("selected");
+  }
+  updateSelectionUI();
+}
+function selectPhotoItem(itemEl){
+  const name = itemEl.dataset.name;
+  if(!name || selectedNames.has(name)) return;
+  selectedNames.add(name);
+  itemEl.classList.add("selected");
+  updateSelectionUI();
+}
+
+el.selectModeBtn.addEventListener("click", enterSelectMode);
+el.selectCancelBtn.addEventListener("click", exitSelectMode);
+el.selectAllBtn.addEventListener("click", () => {
+  el.photoGrid.querySelectorAll(".photo-item").forEach(selectPhotoItem);
+});
+el.selectNoneBtn.addEventListener("click", () => {
+  selectedNames.clear();
+  el.photoGrid.querySelectorAll(".photo-item.selected").forEach(item => item.classList.remove("selected"));
+  updateSelectionUI();
+});
+
+// ドラッグ（スワイプ）で連続選択。指が通過したサムネイルを順に選択状態にする（トグルではなく追加のみ）
+let dragJustSelected = false; // ドラッグ直後のタップ誤トグルを防ぐフラグ
+(function setupDragSelect(){
+  const MOVE_THRESHOLD = 8;
+  let dragging = false;
+  let moved = false;
+  let lastItem = null;
+  let startX = 0, startY = 0;
+
+  function itemFromPoint(x, y){
+    const target = document.elementFromPoint(x, y);
+    return target ? target.closest(".photo-item") : null;
+  }
+  function start(x, y){
+    if(!selectionMode) return;
+    dragging = true;
+    moved = false;
+    dragJustSelected = false;
+    startX = x; startY = y;
+    lastItem = itemFromPoint(x, y);
+  }
+  function move(x, y){
+    if(!selectionMode || !dragging) return;
+    if(!moved && (Math.abs(x - startX) > MOVE_THRESHOLD || Math.abs(y - startY) > MOVE_THRESHOLD)){
+      moved = true;
+      if(lastItem){ selectPhotoItem(lastItem); dragJustSelected = true; } // ドラッグ開始点も選択に含める
+    }
+    if(!moved) return;
+    const item = itemFromPoint(x, y);
+    if(item && item !== lastItem){
+      selectPhotoItem(item);
+      lastItem = item;
+      dragJustSelected = true;
+    }
+  }
+  function end(){
+    dragging = false;
+    lastItem = null;
+  }
+
+  el.photoGrid.addEventListener("touchstart", (e) => { const t = e.touches[0]; start(t.clientX, t.clientY); }, { passive: true });
+  el.photoGrid.addEventListener("touchmove", (e) => { const t = e.touches[0]; move(t.clientX, t.clientY); }, { passive: true });
+  el.photoGrid.addEventListener("touchend", end, { passive: true });
+  // PCでの確認用（マウスドラッグ）
+  el.photoGrid.addEventListener("mousedown", (e) => start(e.clientX, e.clientY));
+  el.photoGrid.addEventListener("mousemove", (e) => move(e.clientX, e.clientY));
+  window.addEventListener("mouseup", end);
+})();
+
+// 選択した写真を一括でゴミ箱へ移動
+el.deleteSelectedBtn.addEventListener("click", async () => {
+  if(selectedNames.size === 0) return;
+  if(!confirm(`選択した${selectedNames.size}枚をゴミ箱に移動しますか？`)) return;
+
+  const names = Array.from(selectedNames);
+  el.deleteSelectedBtn.disabled = true;
+
+  const moved = [];
+  let done = 0;
+  el.uploadProgress.textContent = `削除中 0/${names.length}`;
+  for(const name of names){
+    const { error, from, to } = await moveToTrash(ME, name);
+    if(!error) moved.push({ from, to });
+    else console.error(error);
+    done++;
+    el.uploadProgress.textContent = `削除中 ${done}/${names.length}`;
+  }
+  el.uploadProgress.textContent = "";
+
+  exitSelectMode();
+  await loadMyPhotos();
+
+  if(moved.length > 0) showUndoToast(moved);
+});
+
+// ---------- ゴミ箱（誤削除からの復元） ----------
+
+// 削除日時（JST）を "YYYYMMDDTHHMMSS" 形式で返す。ゴミ箱内のファイル名の先頭に付与する
+function trashTimestamp(){
+  const parts = new Intl.DateTimeFormat("ja-JP", {
+    timeZone: "Asia/Tokyo", year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23",
+  }).formatToParts(new Date());
+  const get = (t) => parts.find(p => p.type === t).value;
+  return `${get("year")}${get("month")}${get("day")}T${get("hour")}${get("minute")}${get("second")}`;
+}
+
+// {actor}/xxx.jpg → trash/{actor}/YYYYMMDDTHHMMSS_xxx.jpg へ move()。物理削除はしない
+async function moveToTrash(actor, fileName){
+  const from = `${actor}/${fileName}`;
+  const to = `trash/${actor}/${trashTimestamp()}_${fileName}`;
+  const { error } = await supabase.storage.from(PHOTO_BUCKET).move(from, to);
+  return { error, from, to };
+}
+
+// ゴミ箱内のファイル名から元のファイル名を復元する（先頭の "YYYYMMDDTHHMMSS_" を取り除くだけ）
+function originalNameFromTrash(trashFileName){
+  return trashFileName.replace(/^\d{8}T\d{6}_/, "");
+}
+
+let undoTimer = null;
+let pendingUndo = []; // [{ from, to }, ...]（to=ゴミ箱側のパス、from=元のパス）
+
+function showUndoToast(movedItems){
+  pendingUndo = movedItems;
+  el.undoText.textContent = `${movedItems.length}枚を削除しました`;
+  el.undoToast.classList.add("show");
+  clearTimeout(undoTimer);
+  undoTimer = setTimeout(hideUndoToast, 8000); // 8秒間表示
+}
+function hideUndoToast(){
+  el.undoToast.classList.remove("show");
+  pendingUndo = [];
+  clearTimeout(undoTimer);
+}
+el.undoBtn.addEventListener("click", async () => {
+  const items = pendingUndo;
+  hideUndoToast();
+  if(items.length === 0) return;
+
+  for(const { from, to } of items){
+    const { error } = await supabase.storage.from(PHOTO_BUCKET).move(to, from); // ゴミ箱→元の場所へ戻す
+    if(error) console.error(error);
+  }
+  await loadMyPhotos();
+  if(el.trashScreen.classList.contains("show")) await loadTrashPhotos();
+});
+
+// ---------- ゴミ箱画面 ----------
+function openTrashScreen(){
+  el.trashScreen.classList.add("show");
+  loadTrashPhotos();
+}
+function closeTrashScreen(){
+  el.trashScreen.classList.remove("show");
+}
+el.trashOpenBtn.addEventListener("click", openTrashScreen);
+el.trashCloseBtn.addEventListener("click", closeTrashScreen);
+
+async function loadTrashPhotos(){
+  el.trashGrid.innerHTML = '<div id="trash-empty">読み込み中…</div>';
+
+  const folder = `trash/${ME}`;
+  const { data: list, error } = await supabase.storage.from(PHOTO_BUCKET).list(folder, { limit: 1000 });
+  if(error){ el.trashGrid.innerHTML = '<div id="trash-empty">読み込みに失敗しました</div>'; return; }
+
+  const files = (list || []).filter(f => f.name && !f.name.startsWith(".")).sort((a, b) => (a.name < b.name ? 1 : -1));
+  if(files.length === 0){
+    el.trashGrid.innerHTML = '<div id="trash-empty">ゴミ箱は空です</div>';
+    return;
+  }
+
+  const paths = files.map(f => `${folder}/${f.name}`);
+  const { data: signedList } = await supabase.storage.from(PHOTO_BUCKET).createSignedUrls(paths, 60 * 60);
+
+  el.trashGrid.innerHTML = "";
+  files.forEach((f, i) => {
+    const signed = signedList && signedList[i];
+    if(!signed || signed.error || !signed.signedUrl) return;
+
+    const item = document.createElement("div");
+    item.className = "trash-item";
+
+    const img = document.createElement("img");
+    img.src = signed.signedUrl;
+    img.loading = "lazy";
+    img.alt = "";
+    item.appendChild(img);
+
+    const actions = document.createElement("div");
+    actions.className = "actions";
+
+    const restoreBtn = document.createElement("button");
+    restoreBtn.className = "trash-restore-btn";
+    restoreBtn.textContent = "復元";
+    restoreBtn.addEventListener("click", () => restoreFromTrash(f.name));
+
+    const purgeBtn = document.createElement("button");
+    purgeBtn.className = "trash-purge-btn";
+    purgeBtn.textContent = "完全に削除";
+    purgeBtn.addEventListener("click", () => purgeFromTrash(f.name));
+
+    actions.appendChild(restoreBtn);
+    actions.appendChild(purgeBtn);
+    item.appendChild(actions);
+
+    el.trashGrid.appendChild(item);
+  });
+}
+
+async function restoreFromTrash(trashFileName){
+  const original = originalNameFromTrash(trashFileName);
+  const { error } = await supabase.storage
+    .from(PHOTO_BUCKET)
+    .move(`trash/${ME}/${trashFileName}`, `${ME}/${original}`);
+  if(error){
+    console.error(error);
+    alert("復元に失敗しました。");
+    return;
+  }
+  await loadTrashPhotos();
+}
+
+async function purgeFromTrash(trashFileName){
+  // 完全削除は元に戻せないため、確認ダイアログを2回出す
+  if(!confirm("完全に削除します。元に戻せません。よろしいですか？")) return;
+  if(!confirm("本当によろしいですか？もう一度確認します。")) return;
+
+  const { error } = await supabase.storage.from(PHOTO_BUCKET).remove([`trash/${ME}/${trashFileName}`]);
+  if(error){
+    console.error(error);
+    alert("削除に失敗しました。");
+    return;
+  }
+  await loadTrashPhotos();
+}
+
+el.restoreAllBtn.addEventListener("click", async () => {
+  const { data: list, error } = await supabase.storage.from(PHOTO_BUCKET).list(`trash/${ME}`, { limit: 1000 });
+  if(error) return;
+  const files = (list || []).filter(f => f.name && !f.name.startsWith("."));
+  if(files.length === 0) return;
+  if(!confirm(`ゴミ箱の${files.length}枚をすべて復元しますか？`)) return;
+
+  el.restoreAllBtn.disabled = true;
+  for(const f of files){
+    const original = originalNameFromTrash(f.name);
+    const { error: moveErr } = await supabase.storage
+      .from(PHOTO_BUCKET)
+      .move(`trash/${ME}/${f.name}`, `${ME}/${original}`);
+    if(moveErr) console.error(moveErr);
+  }
+  el.restoreAllBtn.disabled = false;
+  await loadTrashPhotos();
+});
 
 // ---------- 写真アップロード（リサイズ・orientation補正・EXIF日時ファイル名） ----------
 
