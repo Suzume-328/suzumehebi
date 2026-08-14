@@ -243,14 +243,26 @@
   }
 
   .log-box{
+    position: relative;
     font-size: 12.5px;
     opacity: 0.92;
     margin-bottom: 12px;
+    padding-right: 16px; /* すべて見るヒント(▲)の分の余白 */
     text-shadow: 0 1px 4px rgba(0,0,0,0.6);
     min-height: 16px;
+    cursor: pointer; /* タップでも全履歴を開ける（スワイプの補助） */
   }
   .log-box .name{ font-weight: 700; margin-right: 6px; }
   .log-box .time{ opacity: 0.8; margin-right: 6px; }
+  .log-box::after{
+    /* 上スワイプで全履歴、のヒント */
+    content: "▲";
+    position: absolute;
+    right: 0;
+    top: 1px;
+    font-size: 9px;
+    opacity: 0.6;
+  }
 
   #water-btn{
     width: 100%;
@@ -268,18 +280,6 @@
   #water-btn:disabled{
     opacity: 0.55;
     filter: grayscale(0.3);
-  }
-
-  #test-btn{
-    width: 100%;
-    margin-top: 8px;
-    padding: 9px 0;
-    font-size: 12px;
-    color: #fff;
-    background: rgba(0,0,0,0.35);
-    border: 1px dashed rgba(255,255,255,0.5);
-    border-radius: 999px;
-    cursor: pointer;
   }
 
   /* ---------- コメント入力シート ---------- */
@@ -311,14 +311,12 @@
   }
   #comment-input{
     width: 100%;
-    height: 64px;
-    resize: none;
     border-radius: 12px;
     border: 1px solid rgba(255,255,255,0.25);
     background: rgba(255,255,255,0.08);
     color: #fff;
     font-size: 14px;
-    padding: 10px 12px;
+    padding: 13px 12px;
     font-family: inherit;
   }
   #comment-input::placeholder{ color: rgba(255,255,255,0.45); }
@@ -338,6 +336,63 @@
   }
   #send-btn{ background: #bdeccd; color: #14382c; }
   #cancel-btn{ background: rgba(255,255,255,0.12); color: #fff; }
+
+  /* ---------- 全履歴シート（ログを上スワイプ／タップ） ---------- */
+  #history-backdrop{
+    position: absolute;
+    inset: 0;
+    background: rgba(0,0,0,0.45);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.25s ease;
+  }
+  #history-backdrop.show{ opacity: 1; pointer-events: auto; }
+
+  #history-sheet{
+    position: absolute;
+    left: 0; right: 0; bottom: 0;
+    max-height: 70dvh;
+    display: flex;
+    flex-direction: column;
+    padding: 10px 20px calc(var(--safe-b) + 18px);
+    background: #1c2b24;
+    border-radius: 20px 20px 0 0;
+    transform: translateY(100%);
+    transition: transform 0.3s cubic-bezier(.22,.9,.4,1);
+    box-shadow: 0 -6px 24px rgba(0,0,0,0.4);
+  }
+  #history-sheet.show{ transform: translateY(0); }
+  #history-sheet .handle{
+    width: 36px;
+    height: 4px;
+    margin: 4px auto 10px;
+    border-radius: 999px;
+    background: rgba(255,255,255,0.3);
+  }
+  #history-sheet h3{
+    margin: 0 0 10px;
+    font-size: 14px;
+    font-weight: 600;
+  }
+  #history-list{
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  .history-row{
+    padding: 9px 0;
+    font-size: 12.5px;
+    border-top: 1px solid rgba(255,255,255,0.1);
+  }
+  .history-row:first-child{ border-top: none; }
+  .history-row .h-date{ opacity: 0.6; margin-right: 8px; }
+  .history-row .name{ font-weight: 700; margin-right: 6px; }
+  .history-row .time{ opacity: 0.8; margin-right: 6px; }
+  #history-empty{
+    padding: 16px 0;
+    font-size: 12.5px;
+    opacity: 0.7;
+    text-align: center;
+  }
 
   /* ---------- ログイン画面 ---------- */
   #login-screen{
@@ -504,11 +559,19 @@
   <div id="sheet-backdrop" class="layer"></div>
   <div id="comment-sheet">
     <h3>ひとこと残す（省略OK）</h3>
-    <textarea id="comment-input" placeholder="今日のひとこと…"></textarea>
+    <input type="text" id="comment-input" placeholder="今日のひとこと…">
     <div class="sheet-actions">
       <button id="cancel-btn">キャンセル</button>
       <button id="send-btn">送る</button>
     </div>
+  </div>
+
+  <!-- 全履歴シート -->
+  <div id="history-backdrop" class="layer"></div>
+  <div id="history-sheet">
+    <div class="handle"></div>
+    <h3>ふたりのログ</h3>
+    <div id="history-list"></div>
   </div>
 
 </div>
@@ -537,6 +600,18 @@ const ACTOR_NAME = { yamato: "ヤマト", sakura: "さくら" };
 // 背景写真（Supabase Storage）
 const PHOTO_BUCKET = "photos"; // yamato/ と sakura/ フォルダを持つ非公開バケット
 const DEFAULT_BG_URL = "https://picsum.photos/seed/marimo-lake/900/1600"; // 取得失敗時のフォールバック
+
+// コメント入力のプレースホルダー（日替わり）
+const COMMENT_PLACEHOLDERS = [
+  "今日はどうだった？",
+  "一言どうぞ",
+  "最近どう？",
+  "今日の一コマ",
+  "ひとこと残してね",
+  "今日は何してた？",
+  "調子はどう？",
+  "今日のひとこと",
+];
 
 // 成長ロジック（その日水をあげた人数ごとの増分）
 const GROWTH = {
@@ -602,6 +677,9 @@ const el = {
   input: document.getElementById("comment-input"),
   sendBtn: document.getElementById("send-btn"),
   cancelBtn: document.getElementById("cancel-btn"),
+  historyBackdrop: document.getElementById("history-backdrop"),
+  historySheet: document.getElementById("history-sheet"),
+  historyList: document.getElementById("history-list"),
 };
 
 // ---------- 光の粒を生成 ----------
@@ -697,6 +775,23 @@ async function fetchLatestLog(){
     .limit(1);
   if(error){ console.error(error); return null; }
   return data && data[0];
+}
+
+// 全履歴シート用（新しい順に最大300件。それ以前は今のところ非表示）
+async function fetchLogHistory(){
+  const { data, error } = await supabase
+    .from("log")
+    .select("actor, comment, created_at")
+    .order("created_at", { ascending: false })
+    .limit(300);
+  if(error){ console.error(error); return []; }
+  return data || [];
+}
+
+// 今日の日付を種にした決定的選択で、日替わりのプレースホルダーを1つ返す
+function pickPlaceholder(){
+  const idx = seededIndex("placeholder:" + getLocalDate(), COMMENT_PLACEHOLDERS.length);
+  return COMMENT_PLACEHOLDERS[idx];
 }
 
 // ---------- 未精算の過去日を成長ロジックで精算する ----------
@@ -856,6 +951,7 @@ async function water(comment){
 // ---------- コメントシートの開閉 ----------
 function openSheet(){
   el.input.value = "";
+  el.input.placeholder = pickPlaceholder(); // 日替わりプレースホルダー
   el.sheetBackdrop.classList.add("show");
   el.sheet.classList.add("show");
   setTimeout(() => el.input.focus(), 250);
@@ -876,6 +972,62 @@ el.sendBtn.addEventListener("click", () => {
   closeSheet();
   water(text); // 入力は任意。空でも送信可
 });
+
+// ---------- 全履歴シートの開閉（ログを上スワイプ／タップ） ----------
+function renderHistoryRow(row){
+  const d = new Date(row.created_at);
+  const dateLabel = d.toLocaleDateString("ja-JP", { timeZone: "Asia/Tokyo", month: "numeric", day: "numeric" });
+  const time = d.toLocaleTimeString("ja-JP", { timeZone: "Asia/Tokyo", hour: "2-digit", minute: "2-digit", hour12: false });
+  return (
+    '<div class="history-row">' +
+    '<span class="h-date">' + dateLabel + "</span>" +
+    '<span class="name">' + ACTOR_NAME[row.actor] + "</span>" +
+    '<span class="time">' + time + "</span>" +
+    '<span class="text">' + (row.comment ? "「" + escapeHtml(row.comment) + "」" : "（コメントなし）") + "</span>" +
+    "</div>"
+  );
+}
+
+async function openHistory(){
+  el.historyBackdrop.classList.add("show");
+  el.historySheet.classList.add("show");
+  el.historyList.innerHTML = '<div id="history-empty">読み込み中…</div>';
+
+  const rows = await fetchLogHistory();
+  if(rows.length === 0){
+    el.historyList.innerHTML = '<div id="history-empty">まだログがありません</div>';
+    return;
+  }
+  el.historyList.innerHTML = rows.map(renderHistoryRow).join("");
+}
+function closeHistory(){
+  el.historyBackdrop.classList.remove("show");
+  el.historySheet.classList.remove("show");
+}
+
+el.historyBackdrop.addEventListener("click", closeHistory);
+
+// タップでも上スワイプでも開ける（スワイプ発火時はタップの二重発火を抑止）
+(function setupLogBoxOpen(){
+  let startY = null;
+  let suppressClick = false;
+
+  el.logBox.addEventListener("touchstart", (e) => { startY = e.touches[0].clientY; }, { passive: true });
+  el.logBox.addEventListener("touchend", (e) => {
+    if(startY === null) return;
+    const deltaY = e.changedTouches[0].clientY - startY;
+    startY = null;
+    if(deltaY < -40){ // 40px以上上にスワイプしたら開く
+      suppressClick = true;
+      openHistory();
+    }
+  }, { passive: true });
+
+  el.logBox.addEventListener("click", () => {
+    if(suppressClick){ suppressClick = false; return; }
+    openHistory();
+  });
+})();
 
 // ---------- ログイン ----------
 el.loginForm.addEventListener("submit", async (e) => {
