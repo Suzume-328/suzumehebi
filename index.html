@@ -2190,5 +2190,173 @@ async function enterApp(session){
 })();
 </script>
 
+<script>
+// ---------- マリモの移動（漂う・壁で跳ね返る・指についてくる） ----------
+// マリモのイラスト（#marimo-float の SVG）には一切触れず、それを包む #marimo-wrap の位置だけを動かす。
+// 既存の上下ゆらゆら（marimo-bob）はそのまま残り、移動と重なって見える。
+// 気分: 水質の呼び名（みどり/くすみ/にごり）でスピードを変える。
+(() => {
+  const app = document.getElementById("app");
+  const wrap = document.getElementById("marimo-wrap");
+  const svg = document.getElementById("marimo-float");
+  const colorLabel = document.getElementById("marimo-color");
+  if(!app || !wrap || !svg) return;
+
+  const reduceMotion = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  if(reduceMotion) return; // 「視差効果を減らす」設定なら中央で揺れるだけ（従来どおり）
+
+  const MOOD_SPEED = { "みどり": 1.25, "くすみ": 0.9, "にごり": 0.55 };
+  const BASE_SPEED_RATIO = 0.18;   // ふつう: 1秒に画面幅の18%ほど進む
+  const WANDER_MS = [8000, 14000];  // ゆらゆら漂う時間
+  const CRUISE_MS = [6000, 10000];  // まっすぐ進んで壁で跳ね返る時間
+  const FOLLOW_KEEP_MS = 2500;      // 指を離してからもその場所へ向かう時間
+  const MARGIN = 8;
+
+  // 指で触ったときに反応しない場所（ボタンや入力欄、ゲージ、ログ、シート類）
+  const IGNORE_TOUCH = "button, a, input, textarea, label, #gauge-row, #log-box, #comment-sheet, #history-sheet, #photo-screen, #trash-screen, #sheet-backdrop, #history-backdrop, #recollection-card";
+  const OVERLAYS = ["photo-screen", "trash-screen", "comment-sheet", "history-sheet"]
+    .map(id => document.getElementById(id)).filter(Boolean);
+
+  const rand = (a, b) => a + Math.random() * (b - a);
+  const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+
+  let W = 0, H = 0, bounds = null;
+  let pos = null, vel = { x: 0, y: 0 };
+  let mode = "wander", modeUntil = 0, target = null;
+  let follow = null, followUntil = 0, pointerDown = false;
+  let mood = 1;
+
+  function measure(){
+    const a = app.getBoundingClientRect();
+    W = a.width; H = a.height;
+    const m = svg.getBoundingClientRect();
+    const hw = m.width / 2, hh = m.height / 2;
+
+    // 上: タイトルの下 / 下: ゲージ・ログ・ボタンの上
+    let top = H * 0.18, bottom = H * 0.70;
+    const title = document.querySelector("#top-ui .title-box");
+    if(title){ const r = title.getBoundingClientRect(); if(r.height) top = r.bottom - a.top + MARGIN; }
+    const lows = ["gauge-row", "log-box", "water-btn"].map(id => document.getElementById(id))
+      .filter(e => e && e.offsetParent !== null).map(e => e.getBoundingClientRect().top - a.top);
+    if(lows.length) bottom = Math.min(...lows) - MARGIN;
+
+    let minX = hw + MARGIN, maxX = W - hw - MARGIN;
+    let minY = top + hh, maxY = bottom - hh;
+    if(minX > maxX){ minX = maxX = W / 2; }                 // 大きく育って横に余裕がないとき
+    if(minY > maxY){ minY = maxY = (top + bottom) / 2; }   // 縦に余裕がないとき
+    bounds = { minX, maxX, minY, maxY };
+    if(!pos) pos = { x: W / 2, y: H / 2 };
+  }
+
+  function pickTarget(){
+    return { x: rand(bounds.minX, bounds.maxX), y: rand(bounds.minY, bounds.maxY) };
+  }
+
+  function switchMode(now){
+    if(mode === "wander"){
+      mode = "cruise";
+      modeUntil = now + rand(...CRUISE_MS);
+      const ang = rand(0, Math.PI * 2), sp = BASE_SPEED_RATIO * W * mood;
+      vel = { x: Math.cos(ang) * sp, y: Math.sin(ang) * sp };
+    }else{
+      mode = "wander";
+      modeUntil = now + rand(...WANDER_MS);
+      target = pickTarget();
+    }
+  }
+
+  function updateMood(){
+    const label = colorLabel ? colorLabel.textContent.trim() : "";
+    mood = MOOD_SPEED[label] || 1;
+  }
+
+  function paused(){
+    if(document.hidden || app.classList.contains("hide")) return true;
+    return OVERLAYS.some(o => o.classList.contains("show"));
+  }
+
+  let last = 0;
+  function frame(now){
+    requestAnimationFrame(frame);
+    if(!bounds || paused()){ last = now; return; }
+    const dt = Math.min(0.05, (now - (last || now)) / 1000); // 裏から戻ったときに飛ばないよう上限
+    last = now;
+    if(!modeUntil) switchMode(now);
+
+    const base = BASE_SPEED_RATIO * W * mood;
+    let desired;
+
+    if(follow && (pointerDown || now < followUntil)){
+      // 指についてくる: 近づくほどゆっくり
+      const dx = follow.x - pos.x, dy = follow.y - pos.y, d = Math.hypot(dx, dy) || 1;
+      const sp = Math.min(base * 1.6, d * 2.5);
+      desired = { x: dx / d * sp, y: dy / d * sp };
+      vel.x += (desired.x - vel.x) * Math.min(1, dt * 3);
+      vel.y += (desired.y - vel.y) * Math.min(1, dt * 3);
+    }else if(mode === "cruise"){
+      // まっすぐ進む（速さだけ気分に合わせて保つ）
+      if(now > modeUntil) switchMode(now);
+      const s = Math.hypot(vel.x, vel.y) || 1;
+      vel.x = vel.x / s * base; vel.y = vel.y / s * base;
+    }else{
+      // ゆらゆら漂う: 目的地へゆっくり向かい、着いたら次の場所へ
+      if(now > modeUntil){ switchMode(now); }
+      else{
+        if(!target) target = pickTarget();
+        const dx = target.x - pos.x, dy = target.y - pos.y, d = Math.hypot(dx, dy);
+        if(d < 20) target = pickTarget();
+        const sp = Math.min(base * 0.7, d * 1.2);
+        const sway = Math.sin(now / 900) * base * 0.15; // ふらつき
+        desired = { x: dx / (d || 1) * sp + sway, y: dy / (d || 1) * sp };
+        vel.x += (desired.x - vel.x) * Math.min(1, dt * 1.2);
+        vel.y += (desired.y - vel.y) * Math.min(1, dt * 1.2);
+      }
+    }
+
+    pos.x += vel.x * dt;
+    pos.y += vel.y * dt;
+
+    // 壁で跳ね返る
+    if(pos.x < bounds.minX){ pos.x = bounds.minX; vel.x = Math.abs(vel.x) * 0.9; }
+    if(pos.x > bounds.maxX){ pos.x = bounds.maxX; vel.x = -Math.abs(vel.x) * 0.9; }
+    if(pos.y < bounds.minY){ pos.y = bounds.minY; vel.y = Math.abs(vel.y) * 0.9; }
+    if(pos.y > bounds.maxY){ pos.y = bounds.maxY; vel.y = -Math.abs(vel.y) * 0.9; }
+
+    wrap.style.transform = `translate3d(${(pos.x - W / 2).toFixed(1)}px, ${(pos.y - H / 2).toFixed(1)}px, 0)`;
+  }
+
+  // 指の位置を追いかける（ボタンやシートの上は無視）
+  function toLocal(e){
+    const a = app.getBoundingClientRect();
+    return { x: clamp(e.clientX - a.left, bounds.minX, bounds.maxX), y: clamp(e.clientY - a.top, bounds.minY, bounds.maxY) };
+  }
+  app.addEventListener("pointerdown", (e) => {
+    if(!bounds || paused() || (e.target.closest && e.target.closest(IGNORE_TOUCH))) return;
+    pointerDown = true;
+    follow = toLocal(e);
+  }, { passive: true });
+  app.addEventListener("pointermove", (e) => { if(pointerDown) follow = toLocal(e); }, { passive: true });
+  const release = () => {
+    if(!pointerDown) return;
+    pointerDown = false;
+    followUntil = performance.now() + FOLLOW_KEEP_MS;
+    target = null;
+  };
+  window.addEventListener("pointerup", release, { passive: true });
+  window.addEventListener("pointercancel", release, { passive: true });
+
+  // 大きさ・画面サイズ・気分の変化に追従
+  const remeasure = () => { measure(); if(pos){ pos.x = clamp(pos.x, bounds.minX, bounds.maxX); pos.y = clamp(pos.y, bounds.minY, bounds.maxY); } };
+  if(window.ResizeObserver){ const ro = new ResizeObserver(remeasure); ro.observe(app); ro.observe(svg); }
+  window.addEventListener("resize", remeasure);
+  if(colorLabel) new MutationObserver(updateMood).observe(colorLabel, { childList: true, characterData: true, subtree: true });
+  new MutationObserver(remeasure).observe(app, { attributes: true, attributeFilter: ["class"] }); // ログイン後に表示されたとき
+
+  updateMood();
+  remeasure();
+  requestAnimationFrame(frame);
+})();
+</script>
+
 </body>
 </html>
